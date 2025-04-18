@@ -1,0 +1,31 @@
+{
+  "rules": [
+    {
+      "url": "http://localhost:5000/test-destination",
+      "reason": "legendary pokemon",
+      "match": [
+        "legendary==true"
+      ]
+    },
+    {
+      "url": "http://localhost:5000/test-destination",
+      "reason": "strong pokemon",
+      "match": [
+        "attack>80",
+        "defense>70"
+      ]
+    },
+    {
+      "url": "http://localhost:5000/test-destination",
+      "reason": "fire pokemon",
+      "match": [
+        "type_one==Fire"
+      ]
+    },
+    {
+      "url": "http://localhost:5000/test-destination",
+      "reason": "all pokemon",
+      "match": []
+    }
+  ]
+} 

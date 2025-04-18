@@ -1,0 +1,11 @@
+version: 2
+authtoken: ${NGROK_AUTHTOKEN}
+region: us
+web_addr: 0.0.0.0:4040
+log_level: info
+log_format: json
+tunnels:
+  pokemon-proxy:
+    addr: pokemon-proxy:5000
+    proto: http
+    inspect: true 

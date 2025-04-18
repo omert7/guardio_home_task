@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  pokemon-proxy:
+    build: .
+    container_name: pokemon-proxy
+    restart: unless-stopped
+    environment:
+      - POKEPROXY_CONFIG=config.json
+      - ENC_SECRET=${ENC_SECRET}
+      - PORT=5000
+      - DEFAULT_RATE_LIMIT=${DEFAULT_RATE_LIMIT:-120/minute}
+      - STREAM_RATE_LIMIT=${STREAM_RATE_LIMIT:-100/minute}
+      # Uncomment the following line to enable Redis for distributed rate limiting
+      # - RATE_LIMIT_STORAGE=${RATE_LIMIT_STORAGE}
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./config.json:/app/config.json
+    networks:
+      - pokemon-network
+    healthcheck:
+      test: ["CMD", "bash", "-c", "python validate_config.py && curl -f http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    # Add entrypoint to validate config before starting
+    entrypoint: ["/bin/bash", "-c", "python validate_config.py && python run.py"]
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: ngrok
+    restart: unless-stopped
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    command: "http pokemon-proxy:5000 --log stdout"
+    ports:
+      - "4040:4040"
+    depends_on:
+      - pokemon-proxy
+    networks:
+      - pokemon-network
+    volumes:
+      - ./ngrok-config.yml:/etc/ngrok.yml
+
+  ngrok-url-display:
+    image: python:3.9-slim
+    container_name: ngrok-url-display
+    depends_on:
+      - ngrok
+    networks:
+      - pokemon-network
+    environment:
+      - NGROK_HOST=ngrok
+      - NGROK_PORT=4040
+      - ENC_SECRET=${ENC_SECRET}
+    volumes:
+      - ./get_ngrok_url.py:/app/get_ngrok_url.py
+    working_dir: /app
+    command: >
+      bash -c "pip install requests && sleep 15 && python get_ngrok_url.py"
+
+networks:
+  pokemon-network:
+    driver: bridge
