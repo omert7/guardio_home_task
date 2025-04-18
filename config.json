@@ -11,7 +11,7 @@
       "url": "http://localhost:5000/test-destination-2",
       "reason": "all legendary pokemon",
       "match": [
-        "legendary=@=true"
+        "legendary==true"
       ]
     },
     {
@@ -24,9 +24,9 @@
     },
     {
       "url": "http://localhost:5000/test-destination-2",
-      "reason": "water pokemon",
+      "reason": "Grass pokemon",
       "match": [
-        "type_one==Water"
+        "type_one==Grass"
       ]
     },
     {

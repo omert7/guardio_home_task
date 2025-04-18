@@ -123,8 +123,12 @@ class Rule:
             # Convert the string value to the appropriate type based on the field
             expected_value = self._convert_value(value, actual_value)
             
+            # Log the comparison details for debugging
+            result = Operator.evaluate(op, actual_value, expected_value)
+            logger.debug(f"Rule evaluation: {field} {op} {value} | Actual: '{actual_value}' (type: {type(actual_value).__name__}) | Expected: '{expected_value}' (type: {type(expected_value).__name__}) | Result: {result}")
+            
             # Evaluate the condition
-            return Operator.evaluate(op, actual_value, expected_value)
+            return result
                 
         except Exception as e:
             logger.error(f"Error evaluating rule '{rule}': {str(e)}")
@@ -147,24 +151,6 @@ class Rule:
         else:
             return value
 
-
-async def find_matching_rule(pokemon_model: PokemonModel, rules: List[RuleModel]) -> Optional[Rule]:
-    """Find the first rule that matches the Pokemon.
-    
-    Args:
-        pokemon_model: The Pokemon to check
-        rules: List of rule configurations
-        
-    Returns:
-        Optional[Rule]: The first matching rule, or None if no match
-    """
-    for rule_config in rules:
-        rule = Rule(rule_config)
-        if rule.matches(pokemon_model):
-            return rule
-    
-    logger.info(f"No matching rule for Pokemon: {pokemon_model.name}")
-    return None
 
 async def find_all_matching_rules(pokemon_model: PokemonModel, rules: List[RuleModel]) -> List[Rule]:
     """Find all rules that match the Pokemon.

@@ -47,8 +47,6 @@ pokemon-proxy/
 │   │
 │   └── __init__.py
 │
-├── tests/                  # Test suite
-│
 ├── .env                    # Environment variables (not in git)
 ├── config.json             # Sample configuration
 ├── pokemon.proto           # Protobuf schema definition
@@ -394,14 +392,6 @@ The service includes several features to handle errors gracefully:
 7. **Concurrent Error Handling**: When forwarding to multiple destinations, errors from one destination don't prevent forwarding to others
 
 ## Testing
-
-Run tests with pytest:
-
-```
-pytest tests/
-```
-
-You can also use the provided tools to test manually:
 
 1. Test with a sample Pokemon:
 ```

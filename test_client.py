@@ -9,7 +9,6 @@ import argparse
 import json
 import asyncio
 import httpx
-
 from app.models.pokemon_pb2 import Pokemon
 
 def generate_hmac(message: bytes, secret: str) -> str:
