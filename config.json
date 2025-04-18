@@ -8,11 +8,25 @@
       ]
     },
     {
+      "url": "http://localhost:5000/test-destination-2",
+      "reason": "all legendary pokemon",
+      "match": [
+        "legendary=@=true"
+      ]
+    },
+    {
       "url": "http://localhost:5000/test-destination",
       "reason": "strong pokemon",
       "match": [
         "attack>80",
         "defense>70"
+      ]
+    },
+    {
+      "url": "http://localhost:5000/test-destination-2",
+      "reason": "water pokemon",
+      "match": [
+        "type_one==Water"
       ]
     },
     {
@@ -23,8 +37,15 @@
       ]
     },
     {
-      "url": "http://localhost:5000/test-destination",
-      "reason": "all pokemon",
+      "url": "http://localhost:5000/test-destination-2",
+      "reason": "fast pokemon",
+      "match": [
+        "speed>100"
+      ]
+    },
+    {
+      "url": "http://localhost:5000/test-unreachable",
+      "reason": "fallback destination",
       "match": []
     }
   ]

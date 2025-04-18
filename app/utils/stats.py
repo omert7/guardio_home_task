@@ -32,13 +32,20 @@ async def calculate_endpoint_stats(url: str, url_stats: Dict[str, Any]) -> Dict[
     Returns:
         Dict: Calculated statistics
     """
+    request_count = url_stats.get('request_count', 0)
+    error_count = url_stats.get('error_count', 0)
+    response_times = url_stats.get('response_times', [])
+    
+    # Calculate metrics safely
+    error_rate = (error_count / request_count) * 100 if request_count > 0 else 0
+    avg_response_time = sum(response_times) / len(response_times) * 1000 if response_times else 0
+    
     return {
-        'request_count': url_stats['request_count'],
-        'error_rate': (url_stats['error_count'] / url_stats['request_count']) * 100 if url_stats['request_count'] > 0 else 0,
-        'bytes_in': url_stats['bytes_in'],
-        'bytes_out': url_stats['bytes_out'],
-        'avg_response_time_ms': sum(url_stats['response_times']) / len(url_stats['response_times']) * 1000 if url_stats['response_times'] else 0
-#        'uptime_seconds': (datetime.now() - url_stats['start_time']).total_seconds()
+        'request_count': request_count,
+        'error_rate': error_rate,
+        'bytes_in': url_stats.get('bytes_in', 0),
+        'bytes_out': url_stats.get('bytes_out', 0),
+        'avg_response_time_ms': avg_response_time
     }
 
 def update_request_stats(url: str, body_length: int) -> None:
@@ -48,6 +55,9 @@ def update_request_stats(url: str, body_length: int) -> None:
         url: The endpoint URL
         body_length: Length of the request body in bytes
     """
+    # Initialize stats if they don't exist yet
+    initialize_stats(url)
+    
     stats[url]['request_count'] += 1
     stats[url]['bytes_in'] += body_length
 
@@ -60,6 +70,9 @@ async def update_response_stats(url: str, response_content_length: int, response
         response_time: Response time in seconds
         is_error: Whether the response is an error
     """
+    # Initialize stats if they don't exist yet
+    initialize_stats(url)
+    
     stats[url]['bytes_out'] += response_content_length
     stats[url]['response_times'].append(response_time)
     

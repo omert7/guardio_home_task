@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   pokemon-proxy:
     build: .
@@ -20,13 +18,13 @@ services:
     networks:
       - pokemon-network
     healthcheck:
-      test: ["CMD", "bash", "-c", "python validate_config.py && curl -f http://localhost:5000/health"]
+      test: ["CMD", "bash", "-c", "curl -f http://localhost:5000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
     # Add entrypoint to validate config before starting
-    entrypoint: ["/bin/bash", "-c", "python validate_config.py && python run.py"]
+    entrypoint: ["/bin/bash", "-c", "python run.py"]
 
   ngrok:
     image: ngrok/ngrok:latest

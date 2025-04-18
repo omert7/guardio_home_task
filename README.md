@@ -66,6 +66,8 @@ pokemon-proxy/
 └── requirements.txt        # Python dependencies
 ```
 
+Note: The `pokemon_pb2.py` file is not included in the repository but will be generated at runtime when you run the protoc command or build the Docker image.
+
 ## Setup
 
 ### Local Development
@@ -102,6 +104,28 @@ ENC_SECRET=your_base64_encoded_secret
 ```
 python run.py
 ```
+
+Alternatively, you can use the convenience scripts:
+- On Windows: `start.bat`
+- On Linux/macOS: `./start.sh`
+
+These scripts handle environment setup and start the server.
+
+5. **Important**: Make your service publicly accessible
+
+For the Guardio Pokemon stream to send data to your service, it needs to be publicly accessible from the internet. You have several options:
+
+- **Use ngrok** (easiest):
+  ```
+  ngrok http 5000
+  ```
+  Then use the ngrok URL for registering with Guardio's service
+
+- **Configure port forwarding** on your router (if you have a public IP)
+
+- **Deploy to a cloud service** like AWS, GCP, Azure, or Heroku
+
+Without making your service publicly accessible, the Guardio Pokemon stream won't be able to send data to your service.
 
 ### Docker Deployment
 
@@ -204,7 +228,18 @@ Receives protobuf-encoded Pokemon data, validates the signature, checks against 
 - Headers:
   - `X-Grd-Signature`: HMAC-SHA256 signature of the request body
 - Body: Protobuf-encoded Pokemon data
-- Response: Response from the destination service
+- Response: JSON object containing:
+  - `status`: Status of the operation ("success" or error message)
+  - `pokemon`: Name of the processed Pokemon
+  - `matched_rules_count`: Number of matching rules found
+  - `responses`: Array of responses from all matching destinations, each containing:
+    - `url`: The destination URL
+    - `reason`: The reason for matching from the rule
+    - `status_code`: HTTP status code from the destination
+    - `content`: Content of the response (parsed as JSON if possible, otherwise text or base64 encoded)
+    - `headers`: Headers from the destination response
+
+Note: The service will concurrently forward requests to all matching destinations and gather all responses into a single aggregate response.
 
 ### `/stats` - Statistics Endpoint
 
@@ -233,6 +268,49 @@ Simple debug endpoint for testing.
 - Method: `POST`
 - Body: `{"name": "Pokemon Name"}`
 - Response: `{"status": "ok", "pokemon": "Pokemon Name"}`
+
+### `/test-destination` - Test Destination Endpoint
+
+A built-in endpoint that can be used as a destination in your routing rules for testing.
+
+- Method: `POST`
+- Body: Any JSON data (typically Pokemon data)
+- Response: Response confirming receipt of the data
+- Note: This endpoint is pre-configured in the sample `config.json` file
+
+### `/test-destination-2` - Second Test Destination
+
+A second test endpoint with a different response format to verify multi-rule forwarding works correctly.
+
+- Method: `POST`
+- Body: Any JSON data (typically Pokemon data)
+- Response: Different format response with Pokemon details
+- Note: Used together with the first test endpoint to demonstrate multi-rule matching
+
+## Multi-Rule Matching and Parallel Processing
+
+The service is designed to match Pokemon against all rules in the configuration, not just the first matching rule. When multiple rules match:
+
+1. The requests to all matching destinations are sent **concurrently** (in parallel)
+2. All responses are gathered and returned in a combined response object
+3. The service can handle different response formats from different destinations
+4. If any destination returns an error, the service continues processing other destinations
+
+This enables advanced routing scenarios where the same Pokemon can be sent to multiple specialized services based on different attributes.
+
+### Rate Limiting with Multi-Rule Forwarding
+
+When using multi-rule forwarding, the rate limiting system has been optimized to:
+
+1. Count the incoming Pokemon request as a single request, regardless of how many rules it matches
+2. Use a fault-tolerant client identification system to prevent rate limiting errors
+3. Handle concurrent requests efficiently without blocking
+4. Provide detailed error messages when rate limits are exceeded
+
+Rate limits can be configured via environment variables:
+- `STREAM_RATE_LIMIT`: The rate limit for the `/stream` endpoint (default: "100/minute")
+- `DEFAULT_RATE_LIMIT`: The default rate limit for all other endpoints (default: "120/minute")
+
 
 ## Configuration
 
@@ -288,16 +366,32 @@ The validation checks for:
 
 If validation fails, you'll see detailed error messages explaining what needs to be fixed.
 
+### Sample Files
+
+The repository includes several sample files to help you get started:
+
+1. **sample_pokemon.json**: Contains a sample Pokemon object that can be used with the test client
+2. **config.json**: A sample configuration file with rules that forward to the built-in test destination
+3. **faulty_pokemon.py**: A script that generates faulty Pokemon data to test error handling
+
+These files can be used with the test client for local development:
+
+```bash
+# Test with sample Pokemon
+python test_client.py --secret "your_base64_encoded_secret" --pokemon sample_pokemon.json
+```
+
 ## Error Handling and Robustness
 
 The service includes several features to handle errors gracefully:
 
-1. **Protobuf Fallback**: If a protobuf message can't be parsed, a default Pokemon object is created
+1. **Robust Protobuf Handling**: If a protobuf message can't be parsed, the service returns a clear error response with HTTP 400 status code, including debugging information in the logs
 2. **Header Management**: Problematic headers are removed when forwarding requests to avoid issues with Content-Length
 3. **Validation with Grace**: Fields that fail validation are logged but don't cause the entire request to fail
 4. **Rate Limiting**: Automatic rate limiting through FastAPI/Starlette to prevent abuse
 5. **Timeouts**: Connection timeouts to prevent hanging connections
 6. **Detailed Logging**: Comprehensive logging for debugging and monitoring
+7. **Concurrent Error Handling**: When forwarding to multiple destinations, errors from one destination don't prevent forwarding to others
 
 ## Testing
 
@@ -351,7 +445,7 @@ python test_client.py --secret "your_base64_encoded_secret" --concurrent 10
 
 4. **Header Management**: Careful handling of HTTP headers to avoid common issues like Content-Length mismatches.
 
-5. **Graceful Error Recovery**: Multiple fallback mechanisms to handle corrupted or malformed data.
+5. **Proper Error Handling**: Clear error responses with appropriate HTTP status codes for invalid or corrupted data.
 
 6. **Docker Health Checks**: Container health monitoring to ensure service availability.
 

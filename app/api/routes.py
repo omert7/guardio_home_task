@@ -2,14 +2,15 @@
 
 import time
 import logging
-from typing import Dict, Any
+import asyncio
+from typing import Dict, Any, List, Tuple
 
 from fastapi import APIRouter, Request, Response, Depends, HTTPException
 import httpx
 from google.protobuf.json_format import MessageToDict
 from pydantic import BaseModel
 from app.core.config import Config, get_config, get_secret
-from app.core.rules import find_matching_rule
+from app.core.rules import find_matching_rule, find_all_matching_rules, Rule
 from app.models.pokemon_pb2 import Pokemon
 from app.models import PokemonModel
 from app.utils.crypto import verify_signature
@@ -83,33 +84,21 @@ async def parse_pokemon_data(body: bytes) -> Dict[str, Any]:
         return pokemon_dict
         
     except Exception as e:
+        # Log the error
         logger.error(f"Error parsing protobuf: {str(e)}")
         
-        # If parsing fails, try a fallback approach to handle potential corruption
+        # Log sample of the corrupted data for debugging
         try:
-            # Create an empty Pokemon model
-            default_pokemon = {
-                "number": 0,
-                "name": "Unknown (Parse Error)",
-                "type_one": "unknown",
-                "type_two": "unknown",
-                "total": 0,
-                "hit_points": 0,
-                "attack": 0,
-                "defense": 0,
-                "special_attack": 0,
-                "special_defense": 0,
-                "speed": 0,
-                "generation": 0,
-                "legendary": False
-            }
-            
-            logger.warning("Using fallback Pokemon data due to parse error")
-            return default_pokemon
-            
-        except Exception as fallback_error:
-            logger.error(f"Fallback error: {str(fallback_error)}")
-            raise HTTPException(status_code=400, detail="Invalid protobuf message that couldn't be recovered")
+            sample = body[:100].hex() if len(body) > 0 else "empty"
+            logger.error(f"Corrupted protobuf data sample (hex): {sample}")
+        except Exception as sample_error:
+            logger.error(f"Could not log data sample: {str(sample_error)}")
+        
+        # Return a clear error to the client
+        raise HTTPException(
+            status_code=400, 
+            detail="Invalid or corrupted protobuf message"
+        )
 
 
 async def validate_pokemon_model(pokemon_json: Dict[str, Any]) -> PokemonModel:
@@ -207,6 +196,134 @@ async def forward_request(url: str, data: Dict[str, Any], headers: Dict[str, str
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
+async def forward_to_multiple_destinations(destinations: List[Rule], 
+                                         data: Dict[str, Any], 
+                                         request_headers: Dict[str, str]) -> List[Dict[str, Any]]:
+    """Forward the request to multiple destinations concurrently and gather all responses.
+    
+    Args:
+        destinations: List of Rule objects with destination information
+        data: The data to send to each destination
+        request_headers: The base headers to include in each request
+        
+    Returns:
+        List[Dict]: All responses with destination information
+    """
+    responses = []
+    timeout_settings = httpx.Timeout(10.0, connect=5.0)
+    
+    # Prepare a list of destination information and tasks
+    destination_tasks = []
+    
+    async with httpx.AsyncClient(timeout=timeout_settings) as client:
+        # Create tasks for all destinations
+        for rule in destinations:
+            # Create headers with the specific reason for this rule
+            headers = request_headers.copy()
+            headers['X-Grd-Reason'] = rule.reason
+            
+            # Set Content-Type to application/json and remove Content-Length
+            headers['Content-Type'] = 'application/json'
+            if 'content-length' in headers:
+                del headers['content-length']
+                        
+            # Create the task
+            logger.debug(f"Preparing request to {rule.url} with reason: {rule.reason}")
+            task = client.post(rule.url, json=data, headers=headers)
+            destination_tasks.append((rule, task))
+        
+        # Execute all tasks concurrently with asyncio.gather
+        if destination_tasks:
+            # Split the rules and tasks
+            rules, tasks = zip(*destination_tasks)
+            
+            # Wait for all tasks to complete (truly in parallel)
+            task_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Process all results
+            for rule, result in zip(rules, task_results):
+                try:
+                    if isinstance(result, Exception):
+                        # Handle exceptions from gather
+                        raise result
+                    
+                    # Get the response (result is now the httpx.Response)
+                    response = result
+                    
+                    # Try to parse response content as JSON if possible
+                    response_content = None
+                    try:
+                        response_content = response.json()
+                    except Exception:
+                        # If not JSON, try to decode as string if possible
+                        try:
+                            response_content = response.text
+                        except Exception:
+                            # If can't decode as string, use base64 encoding
+                            import base64
+                            response_content = {
+                                "content_type": response.headers.get("content-type", "unknown"),
+                                "encoded_content": base64.b64encode(response.content).decode('utf-8')
+                            }
+                    
+                    # Make sure headers are serializable to JSON
+                    safe_headers = {}
+                    for key, value in response.headers.items():
+                        # Convert header values to strings to ensure JSON serialization
+                        safe_headers[key] = str(value)
+                    
+                    # Process the response
+                    response_data = {
+                        'url': rule.url,
+                        'reason': rule.reason,
+                        'status_code': response.status_code,
+                        'content': response_content,
+                        'headers': safe_headers
+                    }
+                    
+                    # Update response stats
+                    is_error = response.status_code >= 400
+                    await update_response_stats(
+                        rule.url, 
+                        len(response.content), 
+                        0,  # Time is tracked separately for each destination
+                        is_error
+                    )
+                    
+                    # Log errors if any
+                    if is_error:
+                        logger.error(f"Error from destination {rule.url}: {response.status_code} {response.text}")
+                    
+                    responses.append(response_data)
+                    logger.debug(f"Received response from {rule.url}: status {response.status_code}")
+                    
+                except httpx.RequestError as e:
+                    logger.error(f"Request error when forwarding to {rule.url}: {str(e)}")
+                    # Include error information in the response
+                    responses.append({
+                        'url': rule.url,
+                        'reason': rule.reason,
+                        'status_code': 502,
+                        'error': f"Error communicating with destination: {str(e)}"
+                    })
+                    # Update error stats
+                    await update_response_stats(rule.url, 0, 0, True)
+                    
+                except Exception as e:
+                    logger.error(f"Unexpected error when forwarding to {rule.url}: {str(e)}")
+                    # Include error information in the response
+                    responses.append({
+                        'url': rule.url,
+                        'reason': rule.reason,
+                        'status_code': 500,
+                        'error': f"Internal server error: {str(e)}"
+                    })
+                    # Update error stats
+                    await update_response_stats(rule.url, 0, 0, True)
+    
+    return responses
+
+
 @router.post('/stream')
 @limiter.limit(STREAM_RATE_LIMIT)
 async def stream(request: Request, config: Config = Depends(get_config)):
@@ -221,76 +338,82 @@ async def stream(request: Request, config: Config = Depends(get_config)):
     """
     start_time = time.time()
     
-    # Get the secret and validate signature
-    secret = await get_secret()
-    body = await validate_signature(request, secret)
-    
-    # Parse and validate the Pokemon data
-    pokemon_json = await parse_pokemon_data(body)
-    pokemon_model = await validate_pokemon_model(pokemon_json)
-    
-    # Log information about the received Pokemon
-    logger.info(f"Received Pokemon: {pokemon_model.name} (#{pokemon_model.number}), " +
-                f"Type: {pokemon_model.type_one}/{pokemon_model.type_two}, " +
-                f"HP: {pokemon_model.hit_points}, " +
-                f"Attack: {pokemon_model.attack}, Defense: {pokemon_model.defense}, " +
-                f"Generation: {pokemon_model.generation}, " + 
-                f"Legendary: {pokemon_model.legendary}")
-    
-    # Find a matching rule
-    matched_rule = await find_matching_rule(pokemon_model, config.rules)
-    if not matched_rule:
-        logger.warning(f"No matching rule found for Pokemon: {pokemon_model.name}")
-        return {"status": f"No matching rule found for Pokemon {pokemon_model.name}"}
-    
-    logger.info(f"Matched rule: {matched_rule.url} (Reason: {matched_rule.reason})")
-    
-    # Initialize stats for this endpoint
-    initialize_stats(matched_rule.url)
-    
-    # Update request stats
-    update_request_stats(matched_rule.url, len(body))
-    
     try:
-        # Prepare headers and forward the request
-        headers = await prepare_outgoing_headers(request, matched_rule.reason)
-        response = await forward_request(matched_rule.url, pokemon_model.model_dump(), headers)
+        # Get the secret and validate signature
+        secret = await get_secret()
+        body = await validate_signature(request, secret)
         
-        # Log response information
-        logger.info(f"Forwarded Pokemon {pokemon_model.name} to {matched_rule.url}, " +
-                   f"Status: {response.status_code}, " +
-                   f"Response time: {(time.time() - start_time)*1000:.2f}ms")
+        # Parse and validate the Pokemon data
+        pokemon_json = await parse_pokemon_data(body)
+        pokemon_model = await validate_pokemon_model(pokemon_json)
         
-        # Update response stats
-        is_error = response.status_code >= 400
-        await update_response_stats(
-            matched_rule.url, 
-            len(response.content), 
-            time.time() - start_time,
-            is_error
-        )
+        # Log information about the received Pokemon
+        logger.info(f"Received Pokemon: {pokemon_model.name} (#{pokemon_model.number}), " +
+                    f"Type: {pokemon_model.type_one}/{pokemon_model.type_two}, " +
+                    f"HP: {pokemon_model.hit_points}, " +
+                    f"Attack: {pokemon_model.attack}, Defense: {pokemon_model.defense}, " +
+                    f"Generation: {pokemon_model.generation}, " + 
+                    f"Legendary: {pokemon_model.legendary}")
         
-        # Log errors if any
-        if is_error:
-            logger.error(f"Error from destination: {response.status_code} {response.text}")
+        # Find all matching rules
+        matched_rules = await find_all_matching_rules(pokemon_model, config.rules)
+        if not matched_rules:
+            logger.warning(f"No matching rules found for Pokemon: {pokemon_model.name}")
+            return {"status": f"No matching rules found for Pokemon {pokemon_model.name}"}
         
-        # Return the response from the destination
-        return Response(
-            content=response.content,
-            status_code=response.status_code,
-            headers=dict(response.headers)
-        )
+        # Prepare base headers
+        base_headers = await prepare_outgoing_headers(request, "Multiple Rules")
         
+        # Update request stats for all destinations
+        try:
+            for rule in matched_rules:
+                update_request_stats(rule.url, len(body))
+        except Exception as stats_error:
+            logger.error(f"Error updating request stats: {str(stats_error)}")
+            # Continue processing even if stats update fails
+        
+        try:
+            # Forward to all matching destinations
+            all_responses = await forward_to_multiple_destinations(
+                matched_rules, 
+                pokemon_model.model_dump(), 
+                base_headers
+            )
+            
+            # Log overall response information
+            logger.info(f"Forwarded Pokemon {pokemon_model.name} to {len(matched_rules)} destinations, " +
+                      f"Total time: {(time.time() - start_time)*1000:.2f}ms")
+            
+            # Prepare the aggregate response
+            aggregate_response = {
+                "status": "success",
+                "pokemon": pokemon_model.name,
+                "matched_rules_count": len(matched_rules),
+                "responses": all_responses
+            }
+            
+            # Return the combined response
+            return aggregate_response
+            
+        except Exception as e:
+            # Update error stats for all destinations
+            try:
+                for rule in matched_rules:
+                    await update_response_stats(rule.url, 0, time.time() - start_time, True)
+            except Exception as stats_error:
+                logger.error(f"Error updating error stats: {str(stats_error)}")
+                
+            logger.error(f"Error forwarding requests for Pokemon {pokemon_model.name}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error forwarding requests: {str(e)}")
+    
+    except HTTPException:
+        # Re-raise HTTPExceptions (like 401 for invalid signature)
+        raise
+    
     except Exception as e:
-        # Update error stats
-        await update_response_stats(
-            matched_rule.url, 
-            0, 
-            time.time() - start_time,
-            True
-        )
-        logger.error(f"Error forwarding request for Pokemon {pokemon_model.name}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error forwarding request: {str(e)}")
+        # Catch any unexpected errors
+        logger.error(f"Unexpected error processing stream request: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 @router.get('/stats')
@@ -401,4 +524,60 @@ async def test_destination(request: Request):
             "status": "error",
             "message": f"Error processing request in test destination: {str(e)}",
             "timestamp": time.time()
-        } 
+        }
+
+
+@router.post('/test-destination-2')
+async def test_destination_2(request: Request):
+    """A second test endpoint with different response format.
+    
+    This endpoint is used to verify multi-rule forwarding works correctly.
+    To use this endpoint, set the rule URL to http://localhost:5000/test-destination-2
+    
+    Args:
+        request: The incoming request
+        
+    Returns:
+        Dict: A response with a different format from the first test endpoint
+    """
+    try:
+        # Log all headers for debugging
+        headers_dict = dict(request.headers)
+        logger.debug(f"Test destination 2 received headers: {headers_dict}")
+        
+        # Get the reason from headers
+        reason = request.headers.get('X-Grd-Reason', 'No reason provided')
+        
+        # Parse the request body
+        try:
+            body = await request.json()
+        except Exception:
+            body = {"error": "Could not parse JSON body"}
+        
+        # Extract Pokemon info
+        pokemon_name = body.get('name', 'Unknown')
+        pokemon_type = body.get('type_one', 'Unknown')
+        
+        logger.info(f"Test destination 2 received Pokemon: {pokemon_name} (Type: {pokemon_type})")
+        logger.info(f"Reason for forwarding to endpoint 2: {reason}")
+        
+        # Return a distinctly different response format so we can tell endpoints apart
+        return {
+            "endpoint": "test-destination-2",
+            "status": "received",
+            "pokemon_details": {
+                "name": pokemon_name,
+                "primary_type": pokemon_type,
+                "is_legendary": body.get('legendary', False)
+            },
+            "forwarding_reason": reason,
+            "timestamp": time.time()
+        }
+    except Exception as e:
+        logger.error(f"Error in test destination 2: {str(e)}")
+        return {
+            "endpoint": "test-destination-2",
+            "status": "error",
+            "error_details": str(e),
+            "timestamp": time.time()
+        }

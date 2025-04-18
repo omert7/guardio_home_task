@@ -164,4 +164,27 @@ async def find_matching_rule(pokemon_model: PokemonModel, rules: List[RuleModel]
             return rule
     
     logger.info(f"No matching rule for Pokemon: {pokemon_model.name}")
-    return None 
+    return None
+
+async def find_all_matching_rules(pokemon_model: PokemonModel, rules: List[RuleModel]) -> List[Rule]:
+    """Find all rules that match the Pokemon.
+    
+    Args:
+        pokemon_model: The Pokemon to check
+        rules: List of rule configurations
+        
+    Returns:
+        List[Rule]: All matching rules, or empty list if no matches
+    """
+    matching_rules = []
+    for rule_config in rules:
+        rule = Rule(rule_config)
+        if rule.matches(pokemon_model):
+            matching_rules.append(rule)
+    
+    if not matching_rules:
+        logger.info(f"No matching rules for Pokemon: {pokemon_model.name}")
+    else:
+        logger.info(f"Found {len(matching_rules)} matching rules for Pokemon: {pokemon_model.name}")
+    
+    return matching_rules 
