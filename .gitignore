@@ -1,0 +1,72 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Project specific
+pokemon_pb2.py
+*.proto.py
+test_config.json
+config.json
+stats.json
+logs/
+.coverage
+.pytest_cache/
+htmlcov/
+
+# Node.js (if used for front-end)
+node_modules/
+npm-debug.log
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Generated files
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.out
+
+# Test output
+test-results/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Temporary files
+.tmp/
+*.tmp
+*.swp
+.*.swp 
