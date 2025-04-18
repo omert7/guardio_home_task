@@ -149,53 +149,6 @@ async def prepare_outgoing_headers(request: Request, reason: str) -> Dict[str, s
     return headers
 
 
-async def forward_request(url: str, data: Dict[str, Any], headers: Dict[str, str]) -> httpx.Response:
-    """Forward the request to the destination service.
-    
-    Args:
-        url: The destination URL
-        data: The data to send
-        headers: The headers to include
-        
-    Returns:
-        httpx.Response: The response from the destination
-    """
-    # Create a copy of headers to avoid modifying the original
-    headers_copy = headers.copy()
-    
-    # Set Content-Type to application/json and remove the Content-Length header
-    # since we're changing the format from protobuf to JSON
-    headers_copy['Content-Type'] = 'application/json'
-    
-    # Explicitly remove Content-Length - httpx will calculate the correct length
-    if 'content-length' in headers_copy:
-        del headers_copy['content-length']
-    
-    try:
-        # Create a custom httpx client with appropriate settings
-        timeout_settings = httpx.Timeout(10.0, connect=5.0)
-        
-        async with httpx.AsyncClient(timeout=timeout_settings) as client:
-            logger.debug(f"Forwarding request to {url} with {len(data)} data fields")
-            
-            # Let httpx handle the request by explicitly passing data as json
-            response = await client.post(
-                url, 
-                json=data, 
-                headers=headers_copy
-            )
-            
-            logger.debug(f"Received response: {response.status_code}")
-            return response
-            
-    except httpx.RequestError as e:
-        logger.error(f"Request error when forwarding to {url}: {str(e)}")
-        raise HTTPException(status_code=502, detail=f"Error communicating with destination: {str(e)}")
-    except Exception as e:
-        logger.error(f"Unexpected error when forwarding to {url}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-
 async def forward_to_multiple_destinations(destinations: List[Rule], 
                                          data: Dict[str, Any], 
                                          request_headers: Dict[str, str]) -> List[Dict[str, Any]]:
