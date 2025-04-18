@@ -37,18 +37,17 @@ pokemon-proxy/
 │   │
 │   ├── models/             # Data models
 │   │   ├── __init__.py
-│   │   ├── pokemon_models.py # Pydantic models
-│   │   └── pokemon_pb2.py  # Generated Protobuf classes
+│   │   └── pokemon_models.py # Pydantic models
 │   │
 │   ├── utils/              # Utility functions
 │   │   ├── __init__.py
 │   │   ├── crypto.py       # Cryptographic utilities
+│   │   ├── rate_limiter.py # Rate limiting functionality
 │   │   └── stats.py        # Statistics tracking
 │   │
 │   └── __init__.py
 │
 ├── tests/                  # Test suite
-│   └── test_rules.py       # Rule matching tests
 │
 ├── .env                    # Environment variables (not in git)
 ├── config.json             # Sample configuration
@@ -58,6 +57,12 @@ pokemon-proxy/
 ├── get_ngrok_url.py        # Helper script for ngrok
 ├── ngrok-config.yml        # Configuration for ngrok
 ├── run.py                  # Entry point script
+├── start.bat               # Windows startup script
+├── start.sh                # Linux/Mac startup script
+├── validate_config.py      # Configuration validator
+├── sample_pokemon.json     # Sample Pokemon data
+├── faulty_pokemon.py       # Tool for testing error handling
+├── test_client.py          # Test client for the service
 └── requirements.txt        # Python dependencies
 ```
 
